@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Clara's Focus App — Timer in background</title>
+  <style>
+    html,body{
+      height:100%;margin:0;background:#000;overflow:hidden;font-family:Arial,Helvetica,sans-serif;
+    }
+
+    /* Video container (cover) */
+    .video-container{position:fixed;inset:0;overflow:hidden;pointer-events:none;z-index:0}
+    .video-container iframe{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:150vw;height:150vh;border:none;pointer-events:none}
+
+    /* Clock (big) */
+    .clock{
+      position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+      font-size:clamp(48px,9vw,120px);color:#fff;text-shadow:0 0 20px rgba(0,0,0,0.7);z-index:20;pointer-events:none;font-weight:600;
+    }
+
+    /* mini timer badge moved below the mode buttons (no more overlap) */
+.timer-mini {
+  position: fixed;
+  left: 50%;
+  /* place it below the mode-row and timer-panel */
+  top: calc(50% + 10vh); /* moved down — tweak the 22vh if you want a different spacing */
+  transform: translateX(-50%);
+  z-index: 21;
+  padding: 6px 12px;
+  background: rgba(0,0,0,0.36);
+  color: #fff;
+  border-radius: 10px;
+  font-size: 13px;
+  border: 1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(6px);
+  display: none;
+  pointer-events: none;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.45);
+}
+
+
+    /* Controls row (input + load) */
+    .controls{
+      position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9998;
+      display:flex;gap:8px;align-items:center;background:rgba(0,0,0,0.36);padding:8px 10px;border-radius:10px;border:1px solid rgba(255,255,255,0.06);
+      backdrop-filter:blur(6px);
+      box-shadow:0 6px 20px rgba(0,0,0,0.45);
+    }
+    .controls input{
+      width:520px;max-width:60vw;padding:8px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);
+      background:rgba(255,255,255,0.03);color:#fff;outline:none;font-size:14px;
+    }
+    .controls input::placeholder{color:rgba(255,255,255,0.45)}
+    .controls button{
+      padding:8px 12px;border-radius:8px;border:none;background:rgba(255,255,255,0.12);color:#fff;cursor:pointer;font-size:14px;
+    }
+    .controls button:hover{background:rgba(255,255,255,0.18)}
+
+    /* small mute button (keeps your style) */
+    #unmute{
+      position:fixed;left:10px;top:10px;width:40px;height:40px;border-radius:20px;border:1px solid rgba(255,255,255,0.06);background:rgba(0,0,0,0.36);z-index:9999;
+      display:flex;align-items:center;justify-content:center;font-size:15px;cursor:pointer;
+    }
+    #unmute:hover{background:rgba(0,0,0,0.18)}
+
+    /* hint */
+    #note{position:fixed;right:12px;bottom:12px;color:rgba(255,255,255,0.6);font-size:12px;z-index:9;pointer-events:none}
+
+/* Mode buttons positioned to the left of the clock */
+.mode-row {
+  position: fixed;
+  left: calc(50% - 23vw); /* moves the buttons to the left of center */
+  top: 50%;
+  transform: translateY(-50%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column; /* vertically stacked buttons */
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.mode-row button {
+  padding: 8px 12px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.06);
+  background: rgba(255,255,255,0.10);
+  color: #fff;
+  cursor: pointer;
+  font-size: 14px;
+  backdrop-filter: blur(6px);
+}
+.mode-row button:hover { background: rgba(255,255,255,0.16); }
+.mode-row button.active {
+  background: rgba(255,255,255,0.26);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+}
+
+/* small timer input panel that appears when Timer mode is active */
+#timer-panel {
+  position: fixed;
+  left: 50%;
+  top: calc(50% + 10vh); /* raised to match old mode-row position */
+  transform: translateX(-50%);
+  z-index: 29;
+  display: none;
+  gap: 8px;
+  align-items: center;
+  background: rgba(0,0,0,0.36);
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.06);
+  backdrop-filter: blur(6px);
+}
+#timer-panel input[type="number"]{
+  width:64px;padding:8px;border-radius:8px;border:1px solid rgba(255,255,255,0.08);
+  background:rgba(255,255,255,0.03);color:#fff;font-size:14px;text-align:center;
+}
+#timer-panel button{ padding:8px 10px;border-radius:8px;border:none;background:rgba(255,255,255,0.12);color:#fff;cursor:pointer;}
+
+/* timer controls while running */
+#timer-controls {
+  position: fixed;
+  left: 50%;
+  top: calc(50% + 10vh); /* exact same height as timer-panel */
+  transform: translateX(-50%);
+  z-index: 29;
+  display: none;
+  gap: 8px;
+}
+#timer-controls button{ padding:8px 12px;border-radius:8px;border:none;background:rgba(255,255,255,0.12);color:#fff;cursor:pointer;}
+#timer-controls button:hover{ background:rgba(255,255,255,0.18); }
+
+  </style>
+</head>
+<body>
+
+  <!-- small mute toggle -->
+  <button id="unmute" aria-pressed="true" title="Unmute video">🔊</button>
+
+  <!-- controls: input + load -->
+  <div class="controls" role="region" aria-label="Video controls">
+    <input id="video-url" placeholder="Paste YouTube URL or ID (e.g. https://www.youtube.com/watch?v=... or youtu.be/...)"/>
+    <button id="load-btn">Load</button>
+  </div>
+
+  <!-- video container; API will inject the iframe inside #yt-player -->
+  <div class="video-container">
+    <div id="yt-player"></div>
+  </div>
+
+  <!-- central clock -->
+  <div class="clock" id="clock">00:00:00</div>
+
+  <!-- mini timer badge (visible when timer active while in clock mode) -->
+  <div class="timer-mini" id="timer-mini" aria-hidden="true">Focus: 00:00:00</div>
+
+  <!-- Mode buttons (Clock / Timer) -->
+  <div class="mode-row" id="mode-row" aria-label="Display mode">
+    <button id="btn-clock" class="active" type="button">Clock</button>
+    <button id="btn-timer" type="button">Timer</button>
+  </div>
+
+  <!-- Hidden timer input panel (appears when Timer chosen) -->
+  <div id="timer-panel" aria-hidden="true">
+    <label><input id="t-hrs" type="number" min="0" max="99" value="0" /> h</label>
+    <label><input id="t-mins" type="number" min="0" max="59" value="25" /> m</label>
+    <label><input id="t-secs" type="number" min="0" max="59" value="00" /> s</label>
+    <button id="timer-start">Start</button>
+    <button id="timer-cancel">Cancel</button>
+  </div>
+
+  <!-- Running timer controls -->
+  <div id="timer-controls">
+    <button id="pause-resume">Pause</button>
+    <button id="reset-timer">Reset</button>
+  </div>
+
+  <div id="note">Press Enter in the box or click Load</div>
+
+  <!-- Clock & Timer logic -->
+  <script>
+  /* ---------- Mode state ---------- */
+  let currentMode = 'clock'; // 'clock' or 'timer'
+
+  /* ---------- Clock updater (runs only in clock mode) ---------- */
+  const clockEl = document.getElementById('clock');
+  function showCurrentClock(){
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    const ss = String(now.getSeconds()).padStart(2,'0');
+    clockEl.textContent = `${hh}:${mm}:${ss}`;
+  }
+  setInterval(() => {
+    if(currentMode === 'clock') showCurrentClock();
+  }, 1000);
+  showCurrentClock();
+
+  /* ---------- Timer state & helpers ---------- */
+  let timerInterval = null;
+  let timerRemaining = 0; // seconds
+  let timerInitial = 0; // seconds (for reset)
+  let timerRunning = false;
+
+  const btnClock = document.getElementById('btn-clock');
+  const btnTimer = document.getElementById('btn-timer');
+  const timerPanel = document.getElementById('timer-panel');
+  const pauseResumeBtn = document.getElementById('pause-resume');
+  const resetBtn = document.getElementById('reset-timer');
+  const timerMini = document.getElementById('timer-mini');
+
+  function formatHMS(total){
+    const s = Math.max(0, Math.floor(total));
+    const hh = String(Math.floor(s/3600)).padStart(2,'0');
+    const mm = String(Math.floor((s%3600)/60)).padStart(2,'0');
+    const ss = String(s%60).padStart(2,'0');
+    return `${hh}:${mm}:${ss}`;
+  }
+
+  function clearTimerInterval(){
+    if(timerInterval){
+      clearInterval(timerInterval);
+      timerInterval = null;
+    }
+    timerRunning = false;
+  }
+
+  function updateTimerDisplays(){
+    // Update big center or mini badge depending on mode
+    if(timerRunning || timerRemaining > 0){
+      if(currentMode === 'timer'){
+        clockEl.textContent = formatHMS(timerRemaining);
+        timerMini.style.display = 'none';
+        timerMini.setAttribute('aria-hidden','true');
+      } else {
+        // clock mode: show real clock in center, and mini badge with remaining
+        showCurrentClock();
+        timerMini.textContent = `Focus: ${formatHMS(timerRemaining)}`;
+        timerMini.style.display = 'block';
+        timerMini.setAttribute('aria-hidden','false');
+      }
+    } else {
+      // no active timer: hide mini and if in timer mode show 00:00:00
+      timerMini.style.display = 'none';
+      timerMini.setAttribute('aria-hidden','true');
+      if(currentMode === 'timer') clockEl.textContent = '00:00:00';
+    }
+  }
+
+  function startCountdown(){
+    // ensure single interval
+    clearTimerInterval();
+    if(timerRemaining <= 0){
+      updateTimerDisplays();
+      return;
+    }
+    timerRunning = true;
+    pauseResumeBtn.textContent = 'Pause';
+    // immediate update
+    updateTimerDisplays();
+    timerInterval = setInterval(() => {
+      if(!timerRunning) return;
+      timerRemaining = Math.max(0, timerRemaining - 1);
+      updateTimerDisplays();
+      if(timerRemaining <= 0){
+        clearTimerInterval();
+        updateTimerDisplays();
+        // optional: notification/sound here
+      }
+    }, 1000);
+  }
+
+  /* ---------- Mode switching ---------- */
+  function enterClockMode(){
+    currentMode = 'clock';
+    btnClock.classList.add('active');
+    btnTimer.classList.remove('active');
+    // hide timer input UI & timer controls but keep timer running in background
+    timerPanel.style.display = 'none';
+    timerPanel.setAttribute('aria-hidden','true');
+    document.getElementById('timer-controls').style.display = 'none';
+    // show live clock and mini if timer active
+    showCurrentClock();
+    updateTimerDisplays();
+  }
+
+  function enterTimerMode(){
+    currentMode = 'timer';
+    btnTimer.classList.add('active');
+    btnClock.classList.remove('active');
+    // If a timer is running, show the running controls and DO NOT re-open the input panel.
+    // If no timer is running, show the input panel so user can set a duration.
+    if(timerRunning || timerRemaining > 0){
+      // show running controls
+      timerPanel.style.display = 'none';
+      timerPanel.setAttribute('aria-hidden','true');
+      document.getElementById('timer-controls').style.display = 'flex';
+      clockEl.textContent = formatHMS(timerRemaining || 0);
+    } else {
+      // show input panel for new timer
+      timerPanel.style.display = 'flex';
+      timerPanel.setAttribute('aria-hidden','false');
+      document.getElementById('timer-controls').style.display = 'none';
+      clockEl.textContent = '00:00:00';
+      setTimeout(()=>document.getElementById('t-hrs').focus(), 40);
+    }
+    // hide mini badge in timer mode
+    timerMini.style.display = 'none';
+    timerMini.setAttribute('aria-hidden','true');
+  }
+
+  btnClock.addEventListener('click', enterClockMode);
+  btnTimer.addEventListener('click', enterTimerMode);
+
+  /* ---------- Timer panel actions ---------- */
+  const hrsInput = document.getElementById('t-hrs');
+  const minsInput = document.getElementById('t-mins');
+  const secsInput = document.getElementById('t-secs');
+  const startBtn = document.getElementById('timer-start');
+  const cancelBtn = document.getElementById('timer-cancel');
+  const controlsWrapper = document.getElementById('timer-controls');
+
+  function normalizeInputs(){
+    function norm(inp, max){
+      let v = parseInt(inp.value || '0', 10);
+      if(isNaN(v) || v < 0) v = 0;
+      if(v > max) v = max;
+      inp.value = String(v).padStart(2,'0');
+      return v;
+    }
+    const h = norm(hrsInput, 99);
+    const m = norm(minsInput, 59);
+    const s = norm(secsInput, 59);
+    return h*3600 + m*60 + s;
+  }
+
+  startBtn.addEventListener('click', () => {
+    const total = normalizeInputs();
+    if(total <= 0){
+      alert('Enter a duration greater than 0.');
+      return;
+    }
+    // hide input panel and show running controls
+    timerPanel.style.display = 'none';
+    timerPanel.setAttribute('aria-hidden','true');
+    controlsWrapper.style.display = 'flex';
+    // set timer state
+    timerInitial = total;
+    timerRemaining = total;
+    // start countdown (single interval)
+    startCountdown();
+    // set UI to timer mode (but keep inputs hidden because timer's running)
+    currentMode = 'timer';
+    btnTimer.classList.add('active');
+    btnClock.classList.remove('active');
+    // ensure central display shows countdown
+    clockEl.textContent = formatHMS(timerRemaining);
+  });
+
+  [hrsInput, minsInput, secsInput].forEach(inp => {
+    inp.addEventListener('keydown', (e) => { if(e.key === 'Enter') startBtn.click(); });
+    inp.addEventListener('blur', () => {
+      let v = parseInt(inp.value || '0', 10);
+      if(isNaN(v) || v < 0) v = 0;
+      inp.value = String(v).padStart(2,'0');
+    });
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    // stop timer and reset display to 00:00:00, stay in timer mode and show inputs
+    clearTimerInterval();
+    timerRemaining = 0;
+    timerInitial = 0;
+    clockEl.textContent = '00:00:00';
+    controlsWrapper.style.display = 'none';
+    timerPanel.style.display = 'flex';
+    timerPanel.setAttribute('aria-hidden','false');
+    // reset inputs to defaults
+    hrsInput.value = '00'; minsInput.value = '25'; secsInput.value = '00';
+    hrsInput.focus();
+    updateTimerDisplays();
+  });
+
+  pauseResumeBtn.addEventListener('click', () => {
+    if(timerRunning){
+      timerRunning = false;
+      pauseResumeBtn.textContent = 'Resume';
+    } else {
+      if(timerRemaining <= 0) return;
+      timerRunning = true;
+      pauseResumeBtn.textContent = 'Pause';
+    }
+  });
+
+  resetBtn.addEventListener('click', () => {
+    clearTimerInterval();
+    timerRemaining = timerInitial || 0;
+    clockEl.textContent = formatHMS(timerRemaining);
+    timerRunning = false;
+    pauseResumeBtn.textContent = 'Pause';
+    controlsWrapper.style.display = 'none';
+    timerPanel.style.display = 'flex';
+    timerPanel.setAttribute('aria-hidden','false');
+    updateTimerDisplays();
+  });
+
+  // initialize defaults
+  enterClockMode();
+</script>
+
+
+  <!-- YouTube API + dynamic load (unchanged) -->
+  <script>
+    /* --- YouTube handling unchanged from previous working version --- */
+    function extractYouTubeID(input){
+      if(!input) return null;
+      input = input.trim();
+      const maybeId = input.replace(/[^a-zA-Z0-9_-]/g,'');
+      if(maybeId.length === 11 && /^[a-zA-Z0-9_-]{11}$/.test(maybeId)) return maybeId;
+      const patterns = [
+        /(?:https?:\/\/)?(?:www\.)?youtu\.be\/([A-Za-z0-9_-]{11})/,
+        /(?:https?:\/\/)?(?:www\.)?youtube\.com\/watch\?v=([A-Za-z0-9_-]{11})/,
+        /(?:https?:\/\/)?(?:www\.)?youtube\.com\/embed\/([A-Za-z0-9_-]{11})/,
+        /(?:https?:\/\/)?(?:www\.)?youtube\.com\/v\/([A-Za-z0-9_-]{11})/,
+        /[?&]v=([A-Za-z0-9_-]{11})/,
+      ];
+      for(const re of patterns){
+        const m = input.match(re);
+        if(m && m[1]) return m[1];
+      }
+      const m2 = input.match(/([A-Za-z0-9_-]{11})/);
+      return m2 ? m2[1] : null;
+    }
+
+    const VIDEO_ID_DEFAULT = 'e6XBI54P8bc';
+    const btn = document.getElementById('unmute');
+    const input = document.getElementById('video-url');
+    const loadBtn = document.getElementById('load-btn');
+
+    let player, playerReady = false;
+    let shouldLoop = true;
+
+    const tag = document.createElement('script');
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.head.appendChild(tag);
+
+    function onYouTubeIframeAPIReady(){
+      player = new YT.Player('yt-player', {
+        videoId: VIDEO_ID_DEFAULT,
+        playerVars: {
+          autoplay: 1, mute: 1, controls: 0, loop: 1,
+          playlist: VIDEO_ID_DEFAULT, modestbranding: 1, rel: 0, enablejsapi: 1, playsinline: 1
+        },
+        events: {
+          onReady: (e) => { playerReady = true; applyCoverStyle(); syncButton(); },
+          onStateChange: (e) => { if(e.data === YT.PlayerState.ENDED && shouldLoop && playerReady){ try{ player.playVideo(); }catch(e){} } },
+          onError: (err) => { console.error('YT error', err); }
+        }
+      });
+    }
+
+    function applyCoverStyle(){
+      const f = document.querySelector('#yt-player iframe');
+      if(!f) return;
+      f.style.position = 'absolute'; f.style.top = '50%'; f.style.left = '50%';
+      f.style.transform = 'translate(-50%,-50%)'; f.style.width = '150vw'; f.style.height = '150vh';
+      f.style.pointerEvents = 'none'; f.style.border = 'none';
+    }
+
+    function syncButton(){
+      if(!playerReady) return;
+      try{
+        const muted = player.isMuted();
+        btn.textContent = muted ? '🔇' : '🔊';
+        btn.title = muted ? 'Unmute video' : 'Mute video';
+        btn.setAttribute('aria-pressed', String(!muted));
+      }catch(e){}
+    }
+
+    btn.addEventListener('click', () => {
+      if(!playerReady){
+        const fallback = document.querySelector('#yt-player iframe');
+        if(fallback && fallback.contentWindow){
+          fallback.contentWindow.postMessage(JSON.stringify({event:'command',func:'unMute',args:[]}),'*');
+          fallback.contentWindow.postMessage(JSON.stringify({event:'command',func:'playVideo',args:[]}),'*');
+        }
+        return;
+      }
+      try{
+        if(player.isMuted()){ player.unMute(); try{ player.playVideo(); }catch(e){} }
+        else player.mute();
+        setTimeout(syncButton, 80);
+      }catch(e){ console.error('Toggle error', e); }
+    });
+
+    function loadVideoByIdSafe(newId){
+      if(!newId) return;
+      if(!playerReady){ alert('Player not ready yet.'); return; }
+      try{
+        const wasMuted = player.isMuted();
+        player.loadVideoById({videoId: newId, startSeconds: 0});
+        if(typeof player.setLoop === 'function'){ try{ player.setLoop(true); }catch(e){} }
+        else if(typeof player.loadPlaylist === 'function'){ try{ player.loadPlaylist([newId],0,0); }catch(e){} }
+        if(wasMuted) player.mute(); else { player.unMute(); try{ player.playVideo(); }catch(e){} }
+        setTimeout(applyCoverStyle,150); setTimeout(syncButton,120);
+      }catch(err){ console.error('Failed to load video', err); alert('Failed to load video. See console.'); }
+    }
+
+    function handleLoadAction(){
+      const raw = input.value.trim();
+      if(!raw){ alert('Please paste a YouTube URL or ID.'); return; }
+      const id = extractYouTubeID(raw);
+      if(!id){ alert('Could not extract a video ID from that input.'); return; }
+      loadVideoByIdSafe(id);
+    }
+
+    loadBtn.addEventListener('click', handleLoadAction);
+    input.addEventListener('keydown', (e) => { if(e.key === 'Enter') handleLoadAction(); });
+
+    window.addEventListener('resize', () => setTimeout(applyCoverStyle, 120));
+  </script>
+</body>
+</html>
